@@ -1,0 +1,122 @@
+# Version du format Docker Compose
+version: '3.8'
+
+# Définition des services (applications) qui vont tourner ensemble
+services:
+
+  # Service principal : API ASP.NET Core
+  concertation.banking-api:
+    # Nom de l'image Docker à utiliser
+    image: concertationbankingapi-prod
+
+    # Nom du conteneur dans Docker
+    container_name: concertation-api-prod
+
+    # Configuration de construction de l'image (si nécessaire)
+    build:
+      context: .
+      dockerfile: Concertation.Banking.API/Dockerfile.prod
+
+    # Variables d'environnement pour la production
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - TZ=Etc/UTC
+      # Chaîne de connexion à la base de données PostgreSQL
+      - ConnectionStrings__Default=Host=concertation.banking-db;Port=5432;Database=concertationbanking;Username=produser;Password=strongpassword;
+
+    # Ports exposés sur la machine hôte
+    ports:
+      - "80:80"  # HTTP
+      - "443:443" # HTTPS
+
+    # Volumes pour persister ou partager des fichiers
+    volumes:
+      # Montage des certificats SSL/TLS pour HTTPS
+      - ./certs:/etc/ssl/certs:ro
+
+    # Dépendance : attend que la base soit prête avant de démarrer
+    depends_on:
+      - concertation.banking-db
+
+    # Redémarrer automatiquement si le conteneur s'arrête
+    restart: unless-stopped
+
+    # Réseau personnalisé pour la communication inter-services
+    networks:
+      - concertation-network
+
+
+  # Base de données PostgreSQL pour l'application principale
+  concertation.banking-db:
+    image: postgres:16
+    container_name: concertation-db-prod
+    environment:
+      POSTGRES_USER: produser
+      POSTGRES_PASSWORD: strongpassword
+      POSTGRES_DB: concertationbanking
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+    networks:
+      - concertation-network
+
+
+  # Base de données PostgreSQL pour Keycloak
+  keycloak-db:
+    image: postgres:16
+    container_name: keycloak-postgres-db-prod
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloakuser
+      POSTGRES_PASSWORD: securekeycloakpass
+    volumes:
+      - keycloak_postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    networks:
+      - concertation-network
+
+
+  # Service Keycloak (gestion d'identité et authentification)
+  concertation-idp:
+    image: quay.io/keycloak/keycloak:latest
+    container_name: concertation-keycloak-prod
+    command: start --http-enabled=true
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin123
+      KC_DB: postgres
+      KC_DB_URL_HOST: keycloak-db
+      KC_DB_URL_DATABASE: keycloak
+      KC_DB_USERNAME: keycloakuser
+      KC_DB_PASSWORD: securekeycloakpass
+      KC_HOSTNAME: auth.yourdomain.com  # Doit être un domaine public
+      KC_HTTP_ENABLED: false            # Désactivé car on utilise un reverse proxy
+      KC_PROXY: edge                    # Utile derrière un reverse proxy
+    depends_on:
+      - keycloak-db
+    restart: unless-stopped
+    networks:
+      - concertation-network
+
+
+  # Redis pour la mise en cache
+  redis:
+    image: redis:latest
+    container_name: concertation-redis-prod
+    volumes:
+      - redisdata:/data
+    restart: unless-stopped
+    networks:
+      - concertation-network
+
+
+# Volumes persistants pour conserver les données entre redémarrages
+volumes:
+  pgdata:
+  redisdata:
+  keycloak_postgres_data:
+
+# Réseau personnalisé pour permettre aux conteneurs de communiquer entre eux
+networks:
+  concertation-network:
+    name: concertation-network-prod
